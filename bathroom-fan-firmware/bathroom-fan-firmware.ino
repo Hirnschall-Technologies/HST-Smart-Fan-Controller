@@ -36,16 +36,16 @@ ESP8266WebServer server(80);  //listen to port 80
 
 #define DHTTYPE    DHT22
 
-#define MAX_ACCEPTABLE_HUMIDITY_DELTA_ON 10
-#define MAX_ACCEPTABLE_HUMIDITY_DELTA_OFF 5
-#define MAX_ACCEPTABLE_HUMIDITY 97
-float requestedHumidity=70;
+float MAX_ACCEPTABLE_HUMIDITY_DELTA_ON=8;
+float MAX_ACCEPTABLE_HUMIDITY_DELTA_OFF=5;
+float MAX_ACCEPTABLE_HUMIDITY=97;
+int requestedHumidity=70;
 
-#define TEMP_READ_INTERVALL_IN_MS 10000
-#define MIN_LIGHT_ON_TIME_TOILET 180000 //3min
-#define TOILET_FAN_ON_TIME 600000 //10min
-#define MANUAL_ON_TIME 900000 //15min
-#define MANUAL_OFF_TIME 1200000 //20min
+unsigned int TEMP_READ_INTERVALL_IN_MS=10000;
+unsigned int MIN_LIGHT_ON_TIME_TOILET=180000; //3min
+unsigned int TOILET_FAN_ON_TIME=600000; //10min
+unsigned int MANUAL_ON_TIME=900000; //15min
+unsigned int MANUAL_OFF_TIME=1200000; //20min
 
 
 #define TEMP_SEND_INTERVALL_IN_MS 60000
@@ -82,17 +82,19 @@ unsigned long manualAt = 0;
 
 void sendInfluxData(float t1,float t2,float h1,float h2, int force = 0);
 
-void setRequestedHumidity(float hum){
+void setRequestedHumidity(int hum){
   if(hum<0 || hum>100)
     return;
     
   requestedHumidity = hum;
   //send hum status to homekit
-  Serial.print("sending requested humidity status... - ");
-  String serverPath = homebridgeWebhook + "F1&speed=" + String(requestedHumidity);
+  //Serialprint("sending requested humidity status... - ");
+  String tempstatus = currentFanStatus?"true":"false";
+  String serverPath = homebridgeWebhook + "F1&state=" + tempstatus + "&speed=" + String(requestedHumidity);
+  //Serialprintln(serverPath);
   http.begin(client, serverPath.c_str());
   int httpResponseCode = http.GET();
-  Serial.println(httpResponseCode);
+  //Serialprintln(httpResponseCode);
   http.end();
 }
 
@@ -109,6 +111,8 @@ int readLightSensor(int pin,unsigned int sensordelay){
 }
 
 void setFanState(int state){
+  if(currentFanStatus == state)
+    return;
   currentFanStatus = state;
   digitalWrite(FANPWMPIN, state?HIGH:LOW);
   sendFanStatus();
@@ -116,12 +120,13 @@ void setFanState(int state){
 
 void sendFanStatus(){
   //send fan status to homekit
-  Serial.print("sending fan status... - ");
+  //Serialprint("sending fan status... - ");
   String tempstatus = currentFanStatus?"true":"false";
   String serverPath = homebridgeWebhook + "F1&state=" + tempstatus;
+  //Serialprintln(serverPath);
   http.begin(client, serverPath.c_str());
   int httpResponseCode = http.GET();
-  Serial.println(httpResponseCode);
+  //Serialprintln(httpResponseCode);
   http.end();
 
   sendInfluxData(1,1,1,1,1);
@@ -129,7 +134,7 @@ void sendFanStatus(){
 
 void sendOcupancyStatus(int sensorId){
   //send fan status to homekit
-  Serial.print("sending ocupancy status... - ");
+  //Serialprint("sending ocupancy status... - ");
   String tempstatus = "";
   if(sensorId == 1)
     tempstatus = L1IsOn?"true":"false";
@@ -138,83 +143,98 @@ void sendOcupancyStatus(int sensorId){
     
   String tempid = String(sensorId);
   String serverPath = homebridgeWebhook + "O" + tempid + "&state=" + tempstatus;
-  Serial.println(serverPath);
+  //Serialprintln(serverPath);
   //Serial.println(serverPath);
   http.begin(client, serverPath.c_str());
   int httpResponseCode = http.GET();
-  Serial.println(httpResponseCode);
+  //Serialprintln(httpResponseCode);
   http.end();
 
+  //influx data
+  //Serialprintln("writing o1 status to influxdb.");
+     pointDeviceO1.clearFields();
+     pointDeviceO1.addField("value", L1IsOn?1:0);
+     if (!clientDB.writePoint(pointDeviceO1)) {
+       //Serialprint("write failed: ");
+       //Serialprintln(clientDB.getLastErrorMessage());
+     }
+     //Serialprintln("writing o2 status to influxdb.");
+     pointDeviceO2.clearFields();
+     pointDeviceO2.addField("value", L2IsOn?1:0);
+     if (!clientDB.writePoint(pointDeviceO2)) {
+       //Serialprint("write failed: ");
+       //Serialprintln(clientDB.getLastErrorMessage());
+     }
 }
 
 void sendTemperatureStatus(float data,int sendorId){
   //send fan status to homekit
-  Serial.print("sending temperature status... - ");
+  //Serialprint("sending temperature status... - ");
   String tempid = String(sendorId);
   String serverPath = homebridgeWebhook + "T" + tempid + "&value=" + data;
+  //Serialprintln(serverPath);
   //Serial.println(serverPath);
   http.begin(client, serverPath.c_str());
   int httpResponseCode = http.GET();
-  Serial.println(httpResponseCode);
+  //Serialprintln(httpResponseCode);
   http.end();
 }
 void sendHumidityStatus(float data,int sendorId){
   //send fan status to homekit
-  Serial.print("sending temperature status... - ");
+  //Serialprint("sending temperature status... - ");
   String tempid = String(sendorId);
   String serverPath = homebridgeWebhook + "H" + tempid + "&value=" + data;
+  //Serialprintln(serverPath);
   //Serial.println(serverPath);
   http.begin(client, serverPath.c_str());
   int httpResponseCode = http.GET();
-  Serial.println(httpResponseCode);
+  //Serialprintln(httpResponseCode);
   http.end();
 }
 
 
 void sendInfluxData(float t1,float t2,float h1,float h2, int force){
-   Serial.print("writing fan status to influxdb: ");
-   Serial.println(currentFanStatus);
+   //Serialprintln("writing fan status to influxdb.");
    pointDeviceF1.clearFields();
-   pointDeviceF1.addField("value", currentFanStatus);
+   pointDeviceF1.addField("value", currentFanStatus*requestedHumidity);
    if (!clientDB.writePoint(pointDeviceF1)) {
-     Serial.print("write failed: ");
-     Serial.println(clientDB.getLastErrorMessage());
+     //Serialprint("write failed: ");
+     //Serialprintln(clientDB.getLastErrorMessage());
    }
 
    if(!force){
-     Serial.println("writing o1 status to influxdb.");
+     //Serialprintln("writing o1 status to influxdb.");
      pointDeviceO1.clearFields();
      pointDeviceO1.addField("value", L1IsOn?1:0);
      if (!clientDB.writePoint(pointDeviceO1)) {
-       Serial.print("write failed: ");
-       Serial.println(clientDB.getLastErrorMessage());
+       //Serialprint("write failed: ");
+       //Serialprintln(clientDB.getLastErrorMessage());
      }
-     Serial.println("writing o2 status to influxdb.");
+     //Serialprintln("writing o2 status to influxdb.");
      pointDeviceO2.clearFields();
      pointDeviceO2.addField("value", L2IsOn?1:0);
      if (!clientDB.writePoint(pointDeviceO2)) {
-       Serial.print("write failed: ");
-       Serial.println(clientDB.getLastErrorMessage());
+       //Serialprint("write failed: ");
+       //Serialprintln(clientDB.getLastErrorMessage());
      }
-     Serial.println("writing dht1 status to influxdb.");
+     //Serialprintln("writing dht1 status to influxdb.");
      pointDevicedht1.clearFields();
      pointDevicedht1.addField("temperature", t1);
      pointDevicedht1.addField("humidity", h1);
      if (!clientDB.writePoint(pointDevicedht1)) {
-       Serial.print("write failed: ");
-       Serial.println(clientDB.getLastErrorMessage());
+       //Serialprint("write failed: ");
+       //Serialprintln(clientDB.getLastErrorMessage());
      }
-     Serial.println("writing dht2 status to influxdb.");
+     //Serialprintln("writing dht2 status to influxdb.");
      pointDevicedht2.clearFields();
      pointDevicedht2.addField("temperature", t2);
      pointDevicedht2.addField("humidity", h2);
      if (!clientDB.writePoint(pointDevicedht2)) {
-       Serial.print("write failed: ");
-       Serial.println(clientDB.getLastErrorMessage());
+       //Serialprint("write failed: ");
+       //Serialprintln(clientDB.getLastErrorMessage());
      }
    }
 }
-
 
 void getStatus(){
   if(server.hasArg("state")){
@@ -227,7 +247,32 @@ void getStatus(){
       server.send ( 200, "text/html",  String(currentFanStatus));
     }
   }else if(server.hasArg("requestHumidity")){
-    setRequestedHumidity(server.arg("requestHumidity").toFloat());
+    server.send ( 200, "text/html",  String(currentFanStatus));
+    setRequestedHumidity(server.arg("requestHumidity").toInt());
+  }else if(server.hasArg("setDeltaOn")){
+    MAX_ACCEPTABLE_HUMIDITY_DELTA_ON = server.arg("setDeltaOn").toFloat();
+    server.send ( 200, "text/html",  String(MAX_ACCEPTABLE_HUMIDITY_DELTA_ON));
+  }else if(server.hasArg("setDeltaOff")){
+    MAX_ACCEPTABLE_HUMIDITY_DELTA_OFF = server.arg("setDeltaOff").toFloat();
+    server.send ( 200, "text/html",  String(MAX_ACCEPTABLE_HUMIDITY_DELTA_OFF));
+  }else if(server.hasArg("setMaxHumidity")){
+    MAX_ACCEPTABLE_HUMIDITY = server.arg("setMaxHumidity").toFloat();
+    server.send ( 200, "text/html",  String(MAX_ACCEPTABLE_HUMIDITY));
+  }else if(server.hasArg("setReadIntervall")){
+    TEMP_READ_INTERVALL_IN_MS = server.arg("setReadIntervall").toInt();
+    server.send ( 200, "text/html",  String(TEMP_READ_INTERVALL_IN_MS));
+  }else if(server.hasArg("setMinToiletTime")){
+    MIN_LIGHT_ON_TIME_TOILET = server.arg("setMinToiletTime").toInt();
+    server.send ( 200, "text/html",  String(MIN_LIGHT_ON_TIME_TOILET));
+  }else if(server.hasArg("setFanOnTime")){
+    TOILET_FAN_ON_TIME = server.arg("setFanOnTime").toInt();
+    server.send ( 200, "text/html",  String(TOILET_FAN_ON_TIME));
+  }else if(server.hasArg("setManualOnTime")){
+    MANUAL_ON_TIME = server.arg("setManualOnTime").toInt();
+    server.send ( 200, "text/html",  String(MANUAL_ON_TIME));
+  }else if(server.hasArg("setManualOffTime")){
+    MANUAL_OFF_TIME = server.arg("setManualOffTime").toInt();
+    server.send ( 200, "text/html",  String(MANUAL_OFF_TIME));
   }else{
     server.send ( 200, "application/json",  "{\"temperature1\":" + String(temp1) + ",\"humidity1\":" + String(hum1) + "\"temperature2\":" + String(temp2) + ",\"humidity2\":" + String(hum2) +", \"lightlevel1\":" + String(L1) +",\"lightlevel2\": " + String(L2) +"}" );
   }
@@ -290,10 +335,10 @@ void loop() {
       previousMillis = currentMillis;
       
       
-      if(currentFanStatus)
-        Serial.println("manual on ends in: " + String(MANUAL_ON_TIME - (currentMillis - manualAt)) +"ms");
-      else
-        Serial.println("manual off ends in: " + String(MANUAL_OFF_TIME - (currentMillis - manualAt)) +"ms");
+      //if(currentFanStatus)
+        //Serialprintln("manual on ends in: " + String(MANUAL_ON_TIME - (currentMillis - manualAt)) +"ms");
+      //else
+        //Serialprintln("manual off ends in: " + String(MANUAL_OFF_TIME - (currentMillis - manualAt)) +"ms");
 
       int tempL1 = readLightSensor(L1VCC,SENSORDELAY);
       int tempL2 = readLightSensor(L2VCC,SENSORDELAY);
@@ -393,7 +438,7 @@ void loop() {
 
 
         //turn fan off:
-        if(hum1 <= requestedHumidity || (dist(hum1,hum2)<MAX_ACCEPTABLE_HUMIDITY_DELTA_OFF) && hum1 < MAX_ACCEPTABLE_HUMIDITY && (fanOnAt > currentMillis || currentMillis - fanOnAt > TOILET_FAN_ON_TIME)){
+        if((hum1 <= requestedHumidity || dist(hum1,hum2)<MAX_ACCEPTABLE_HUMIDITY_DELTA_OFF) && hum1 < MAX_ACCEPTABLE_HUMIDITY && (fanOnAt > currentMillis || currentMillis - fanOnAt > TOILET_FAN_ON_TIME)){
           setFanState(0);
         }
       
@@ -404,19 +449,19 @@ void loop() {
       L2 = tempL2;
 
 
-      Serial.print("Reading at" + String(currentMillis) +"ms: ");
-      Serial.print("\tT1=");
-      Serial.print(temp1);
-      Serial.print("\tH1=");
-      Serial.print(hum1);
-      Serial.print("\tO1=");
-      Serial.print(L1IsOn);
-      Serial.print("\tT2=");
-      Serial.print(temp2);
-      Serial.print("\tH2=");
-      Serial.print(hum2);
-      Serial.print("\tO2=");
-      Serial.println(L2IsOn);
+      //Serialprint("Reading at" + String(currentMillis) +"ms: ");
+      //Serialprint("\tT1=");
+      //Serialprint(temp1);
+      //Serialprint("\tH1=");
+      //Serialprint(hum1);
+      //Serialprint("\tO1=");
+      //Serialprint(L1IsOn);
+      //Serialprint("\tT2=");
+      //Serialprint(temp2);
+      //Serialprint("\tH2=");
+      //Serialprint(hum2);
+      //Serialprint("\tO2=");
+      //Serialprintln(L2IsOn);
 
       if(previousSendMillis > currentMillis || currentMillis - previousSendMillis >= TEMP_SEND_INTERVALL_IN_MS)
         {
