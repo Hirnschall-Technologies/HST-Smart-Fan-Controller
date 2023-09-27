@@ -32,7 +32,7 @@ ESP8266WebServer server(80);  //listen to port 80
 
 #define L1VCC 13
 #define L2VCC 12
-#define SENSORDELAY 500
+#define MIN_SENSOR_DELAY 500  //will be at least TEMP_READ_INTERVALL_IN_MS in practice
 
 #define DHTTYPE    DHT22
 
@@ -41,7 +41,7 @@ float MAX_ACCEPTABLE_HUMIDITY_DELTA_OFF=5;
 float MAX_ACCEPTABLE_HUMIDITY=97;
 int requestedHumidity=70;
 
-unsigned int TEMP_READ_INTERVALL_IN_MS=10000;
+unsigned int TEMP_READ_INTERVALL_IN_MS=2000;
 unsigned int MIN_LIGHT_ON_TIME_TOILET=180000; //3min
 unsigned int TOILET_FAN_ON_TIME=600000; //10min
 unsigned int MANUAL_ON_TIME=900000; //15min
@@ -65,6 +65,9 @@ float temp2=0;
 
 int L1 = 0;
 int L2 = 0;
+int currL1 = 0;
+int currL2 = 0;
+int previousLid = 0;  //toggle after L1/L2 is read
 
 bool L1IsOn=false;
 bool L2IsOn=false;
@@ -74,6 +77,8 @@ short currentFanStatus =0;
 unsigned long previousMillis =0;
 unsigned long previousSendMillis =0;
 unsigned long previousInfluxMillis =0;
+unsigned long previousL1Millis =0;
+unsigned long previousL2Millis =0;
 unsigned long fanOnAt =0;
 unsigned long L2OnAt = 0;
 unsigned long manualAt = 0;
@@ -102,12 +107,35 @@ float dist(float x, float y){
   return x>y?x-y:y-x;
 }
 
-int readLightSensor(int pin,unsigned int sensordelay){
-  digitalWrite(pin,HIGH);
-  delay(sensordelay);
-  int val = analogRead(A0);
-  digitalWrite(pin,LOW);
-  return val;
+int readLightSensor(int sensorId){
+  //read light sensors without blocking http responses
+  if(previousLid){  //read L1
+    digitalWrite(L1VCC,HIGH);
+    
+    if(previousL1Millis > previousMillis){  //prevent sensor delays < MIN_SENSOR_DELAY in case of overflow of previousMillis
+      previousL1Millis = previousMillis;
+    }else if(previousMillis - previousL1Millis > MIN_SENSOR_DELAY){
+      currL1 = analogRead(A0);
+      digitalWrite(L1VCC,LOW);
+      previousL1Millis = previousMillis;
+      previousLid = 0;
+    }
+  }else{
+    digitalWrite(L2VCC,HIGH);
+    
+    if(previousL2Millis > previousMillis){ //prevent sensor delays < MIN_SENSOR_DELAY in case of overflow of previousMillis
+      previousL2Millis = previousMillis;
+    }
+    if(previousMillis - previousL2Millis > MIN_SENSOR_DELAY){
+      currL2 = analogRead(A0);
+      digitalWrite(L2VCC,LOW);
+      previousL2Millis = previousMillis;
+      previousLid = 1;
+    }
+  }
+  //sensorId=0 return L1
+  return sensorId?currL2:currL1;
+  
 }
 
 void setFanState(int state){
@@ -340,8 +368,8 @@ void loop() {
       //else
         //Serialprintln("manual off ends in: " + String(MANUAL_OFF_TIME - (currentMillis - manualAt)) +"ms");
 
-      int tempL1 = readLightSensor(L1VCC,SENSORDELAY);
-      int tempL2 = readLightSensor(L2VCC,SENSORDELAY);
+      int tempL1 = readLightSensor(0);
+      int tempL2 = readLightSensor(1);
       hum1 = dht1.readHumidity(); //bathroom
       hum2 = dht2.readHumidity(); //wc
       temp1 = dht1.readTemperature(); //bathroom
@@ -393,8 +421,8 @@ void loop() {
     }else if ((previousMillis > currentMillis || currentMillis - previousMillis >= TEMP_READ_INTERVALL_IN_MS) && (!manualAt || currentMillis - manualAt > manualTime))
     {
       previousMillis = currentMillis;
-      int tempL1 = readLightSensor(L1VCC,SENSORDELAY);
-      int tempL2 = readLightSensor(L2VCC,SENSORDELAY);
+      int tempL1 = readLightSensor(0);
+      int tempL2 = readLightSensor(1);
       hum1 = dht1.readHumidity(); //bathroom
       hum2 = dht2.readHumidity(); //wc
       temp1 = dht1.readTemperature(); //bathroom
