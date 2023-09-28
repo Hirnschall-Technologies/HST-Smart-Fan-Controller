@@ -3,8 +3,8 @@
 #include <ESP8266HTTPClient.h>
 HTTPClient http;
 WiFiClient client;
-const char *ssid = "DLan";
-const char *password = "PW2015dIr615!";
+const char *ssid = "";
+const char *password = "";
 String homebridgeWebhook = "http://192.168.0.101:51828/?accessoryId=";
 //---------------------------------------------------
 #include <ESP8266WiFiMulti.h>

@@ -1,7 +1,7 @@
 #include <DHT.h>
 #include <ESP8266WiFi.h>
-const char *ssid = "DLan";
-const char *password = "PW2015dIr615!";
+const char *ssid = "";
+const char *password = "";
 //---------------------------------------------------
 #include <ESP8266WebServer.h>
 ESP8266WebServer server(80);  //listen to port 80
