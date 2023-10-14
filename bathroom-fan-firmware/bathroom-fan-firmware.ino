@@ -506,7 +506,5 @@ void loop() {
           previousInfluxMillis = currentMillis;
           sendInfluxData(temp1,temp2,hum1,hum2,0);
         }
-      
-      //check toilet light. if it was on for MIN_LIGHT_ON_TIME_TOILET turn the fan on for TOILET_FAN_ON_TIME
     }
 }

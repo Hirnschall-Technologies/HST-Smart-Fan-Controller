@@ -47,7 +47,7 @@ float maxHumidityDeltaWhenOff=8;
 float maxHumidity=97;
 int requestedHumidity=70;
 
-unsigned int dhtSensorReadIntervallInMS=2000;
+unsigned int dhtSensorReadIntervallInMS=20000;
 unsigned int minLightOnTimeInMS=180000; //3min
 unsigned int toiletFanOnTimeInMS=600000; //10min
 unsigned int manualOnTimeInMS=900000; //15min
@@ -55,7 +55,7 @@ unsigned int manualOffTimeInMS=1200000; //20min
 
 
 unsigned int sendDataToHomebridgeIntervallInMS=60000;
-unsigned int sendDataToInfluxDBIntervallInMS=60000;
+unsigned int sendDataToInfluxDBIntervallInMS=30000;
 
 DHT dht1(DHT1PIN, DHTTYPE);
 DHT dht2(DHT2PIN, DHTTYPE);
@@ -82,8 +82,7 @@ unsigned long previousDhtMillis =0;
 unsigned long previousHomebridgeSentMillis =0;
 unsigned long previousInfluxDBSentMillis =0;
 
-unsigned long previousL1Millis =0;
-unsigned long previousL2Millis =0;
+unsigned long previousLMillis =0;
 unsigned long fanOnAt =0;
 unsigned long L2OnAt = 0;
 unsigned long manualAt = 0;
@@ -105,10 +104,16 @@ void sendHumidityStatus();
 void sendInfluxData();
 void respondToHttp();
 
+void serialLog(String data){
+  //Serial.print(currentMillis);
+  //Serial.println("ms:\t\t" + data);
+  return;
+}
+
 void setRequestedHumidity(int hum){
   if(hum<0 || hum>100)
     return;
-    
+  serialLog("Setting humidity to " + String(hum));
   requestedHumidity = hum;
   //send hum status to homekit
   String tempstatus = currentFanStatus?"true":"false";
@@ -137,24 +142,28 @@ void readLightSensors(){
   if(previousLid){  //read L1
     digitalWrite(L1VCC,HIGH);
     
-    if(previousL1Millis > currentMillis){  //prevent sensor delays < minLightOnTimeInMS in case of overflow of currentMillis
-      previousL1Millis = currentMillis;
-    }else if(currentMillis - previousL1Millis > minLightOnTimeInMS){
+    if(previousLMillis > currentMillis){  //prevent sensor delays < minLightOnTimeInMS in case of overflow of currentMillis
+      //serialLog("Overflow L1");
+      previousLMillis = currentMillis;
+    }else if(currentMillis - previousLMillis > minSensorDelayInMS){
+      //serialLog("Reading L1 sensor...");
       L1 = analogRead(A0);
       digitalWrite(L1VCC,LOW);
-      previousL1Millis = currentMillis;
+      previousLMillis = currentMillis;
       previousLid = 0;
     }
   }else{
     digitalWrite(L2VCC,HIGH);
     
-    if(previousL2Millis > currentMillis){ //prevent sensor delays < minLightOnTimeInMS in case of overflow of currentMillis
-      previousL2Millis = currentMillis;
+    if(previousLMillis > currentMillis){ //prevent sensor delays < minLightOnTimeInMS in case of overflow of currentMillis
+      //serialLog("Overflow L2");
+      previousLMillis = currentMillis;
     }
-    if(currentMillis - previousL2Millis > minLightOnTimeInMS){
+    if(currentMillis - previousLMillis > minSensorDelayInMS){
+      //serialLog("Reading L2 sensor...");
       L2 = analogRead(A0);
       digitalWrite(L2VCC,LOW);
-      previousL2Millis = currentMillis;
+      previousLMillis = currentMillis;
       previousLid = 1;
     }
   }
@@ -163,6 +172,7 @@ void readLightSensors(){
 void sendDataToHomebridge(){
   if(previousHomebridgeSentMillis > currentMillis || currentMillis - previousHomebridgeSentMillis >= sendDataToHomebridgeIntervallInMS)
   {
+    serialLog("Sending data to HomeBridge");
     previousHomebridgeSentMillis = currentMillis;
     sendTemperatureStatus(temp1, 1);
     sendTemperatureStatus(temp2, 2);
@@ -173,8 +183,25 @@ void sendDataToHomebridge(){
 void sendDataToInfluxDB(){
   if(previousInfluxDBSentMillis > currentMillis || currentMillis - previousInfluxDBSentMillis >= sendDataToInfluxDBIntervallInMS)
   {
+    serialLog("Sending data to InfluxDB");
     previousInfluxDBSentMillis = currentMillis;
-    sendInfluxData(temp1,temp2,hum1,hum2);
+    pointDeviceF1.clearFields();
+    pointDeviceF1.addField("value", currentFanStatus*requestedHumidity);
+    clientDB.writePoint(pointDeviceF1);
+    pointDeviceO1.clearFields();
+    pointDeviceO1.addField("value", L1IsOn?1:0);
+    clientDB.writePoint(pointDeviceO1);
+    pointDeviceO2.clearFields();
+    pointDeviceO2.addField("value", L2IsOn?1:0);
+    clientDB.writePoint(pointDeviceO2);
+    pointDevicedht1.clearFields();
+    pointDevicedht1.addField("temperature", temp1);
+    pointDevicedht1.addField("humidity", hum1);
+    clientDB.writePoint(pointDevicedht1);
+    pointDevicedht2.clearFields();
+    pointDevicedht2.addField("temperature", temp2);
+    pointDevicedht2.addField("humidity", hum2);
+    clientDB.writePoint(pointDevicedht2);
   }
 }
 
@@ -187,18 +214,21 @@ void setFanState(int state){
 }
 
 void sendFanStatus(){
+  serialLog("Sending fan status to Homebridge and InfluxDB");
   //send fan status to homekit
   String tempstatus = currentFanStatus?"true":"false";
-  String serverPath = homebridgeWebhook + "F1&state=" + tempstatus;
+  String serverPath = homebridgeWebhook + "F1&state=" + tempstatus + "&speed=" + String(requestedHumidity);
   http.begin(client, serverPath.c_str());
   int httpResponseCode = http.GET();
   http.end();
   //send influxdb data
   pointDeviceF1.clearFields();
   pointDeviceF1.addField("value", currentFanStatus*requestedHumidity);
+  clientDB.writePoint(pointDeviceF1);
 }
 
 void sendOcupancyStatus(int sensorId){
+  serialLog("Sending ocupancy status to Homebridge and InfluxDB");
   //send fan status to homekit
   String tempstatus = "";
   if(sensorId == 1)
@@ -215,8 +245,10 @@ void sendOcupancyStatus(int sensorId){
   //influx data
   pointDeviceO1.clearFields();
   pointDeviceO1.addField("value", L1IsOn?1:0);
+  clientDB.writePoint(pointDeviceO1);
   pointDeviceO2.clearFields();
   pointDeviceO2.addField("value", L2IsOn?1:0);
+  clientDB.writePoint(pointDeviceO2);
 }
 
 void sendTemperatureStatus(float data,int sendorId){
@@ -234,22 +266,6 @@ void sendHumidityStatus(float data,int sendorId){
   http.begin(client, serverPath.c_str());
   int httpResponseCode = http.GET();
   http.end();
-}
-
-
-void sendInfluxData(float t1,float t2,float h1,float h2){
-  pointDeviceF1.clearFields();
-  pointDeviceF1.addField("value", currentFanStatus*requestedHumidity);
-  pointDeviceO1.clearFields();
-  pointDeviceO1.addField("value", L1IsOn?1:0);
-  pointDeviceO2.clearFields();
-  pointDeviceO2.addField("value", L2IsOn?1:0);
-  pointDevicedht1.clearFields();
-  pointDevicedht1.addField("temperature", t1);
-  pointDevicedht1.addField("humidity", h1);
-  pointDevicedht2.clearFields();
-  pointDevicedht2.addField("temperature", t2);
-  pointDevicedht2.addField("humidity", h2);
 }
 
 void respondToHttp(){
@@ -342,19 +358,20 @@ void setup() {
 void loop() {
     server.handleClient();
     
-    unsigned long currentMillis = millis();
+    currentMillis = millis();
     unsigned long manualTime = currentFanStatus?manualOnTimeInMS:manualOffTimeInMS;
 
-
+    //serialLog("loop - start");
     readLightSensors();  //read light sensors alternating with respect to minSensorDelayInMS
     readDHTSensors(); //read temperature and humidity
+
 
     //check if manual control is still active
     if(manualAt >= currentMillis || currentMillis - manualAt > manualTime)
       manualAt = 0;
 
     //turn fan on if humidity is high
-    if(!manualAt && !currentFanStatus && (hum1>requestedHumidity || hum1> maxHumidity) && (dist(hum1,hum2) > maxHumidityDeltaWhenOff || hum1> maxHumidity)){
+    if(!manualAt && !currentFanStatus && ((hum1>requestedHumidity && dist(hum1,hum2) > maxHumidityDeltaWhenOff )|| hum1> maxHumidity)){
       setFanState(1);
     }
 
@@ -373,7 +390,7 @@ void loop() {
         //turn fan on
         fanOnAt = currentMillis;
         setFanState(1);
-      }else if(L2OnAt > currentMillis || currentMillis - L2OnAt > minLightOnTimeInMS){
+      }else if(!currentFanStatus && (L2OnAt > currentMillis || currentMillis - L2OnAt > minLightOnTimeInMS)){
         fanOnAt = currentMillis;
       }
       sendOcupancyStatus(2);
@@ -389,7 +406,7 @@ void loop() {
     }
 
     //turn fan off:
-    if(!manualAt && (hum1 <= requestedHumidity || dist(hum1,hum2)<maxHumidityDeltaWhenOn) && hum1 < maxHumidity && (fanOnAt > currentMillis || currentMillis - fanOnAt > toiletFanOnTimeInMS)){
+    if(!manualAt && currentFanStatus && (hum1 <= requestedHumidity || dist(hum1,hum2)<maxHumidityDeltaWhenOn) && hum1 < maxHumidity && (fanOnAt > currentMillis || currentMillis - fanOnAt > toiletFanOnTimeInMS)){
       setFanState(0);
     }
     
